@@ -768,6 +768,7 @@ def test_analysis(
         destinations_by_name=destinations_by_name,
         ignore_exception_types=ignore_exception_types,
         all_test_results=all_test_results,
+        debug_args=debug_args
     )
     invalid_specs.extend(invalid_detections)
 
@@ -1303,6 +1304,7 @@ def _run_tests(  # pylint: disable=too-many-arguments
     status_passed = "passed"
     status_errored = "errored"
     debug_test_found = False
+    breakpoint()
     for unit_test in tests:
         if debug_args.get('debug'):
             if unit_test['Name'] != debug_args['test_name']:
