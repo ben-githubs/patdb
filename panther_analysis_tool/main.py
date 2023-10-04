@@ -1304,7 +1304,6 @@ def _run_tests(  # pylint: disable=too-many-arguments
     status_passed = "passed"
     status_errored = "errored"
     debug_test_found = False
-    breakpoint()
     for unit_test in tests:
         if debug_args.get('debug'):
             if unit_test['Name'] != debug_args['test_name']:
