@@ -658,9 +658,26 @@ def upload_assets_github(upload_url: str, headers: dict, release_dir: str) -> in
     return return_code
 
 
+def debug_analysis(
+    args: argparse.Namespace, backend: typing.Optional[BackendClient] = None,
+):
+    debug_args = {
+        'debug': True,
+        'test_name': args.testid
+    }
+    args.filter = {
+        'RuleID': [args.ruleid]
+    }
+    # I don't want these options to appear in the --help command, but they need
+    # default values for seamless integration with test_analysis
+    args.minimum_tests = 0
+    args.sort_test_results = False
+    return test_analysis(args, backend, debug_args=debug_args)
+
 # pylint: disable=too-many-locals
 def test_analysis(
-    args: argparse.Namespace, backend: typing.Optional[BackendClient] = None
+    args: argparse.Namespace, backend: typing.Optional[BackendClient] = None,
+    debug_args: dict = {}
 ) -> Tuple[int, list]:
     """Imports each policy or rule and runs their tests.
 
@@ -889,6 +906,7 @@ def setup_run_tests(  # pylint: disable=too-many-locals,too-many-arguments
     destinations_by_name: Dict[str, FakeDestination],
     ignore_exception_types: List[Type[Exception]],
     all_test_results: typing.Optional[TestResultsContainer] = None,
+    debug_args: dict = {}
 ) -> Tuple[DefaultDict[str, List[Any]], List[Any]]:
     invalid_specs = []
     failed_tests: DefaultDict[str, list] = defaultdict(list)
@@ -939,6 +957,7 @@ def setup_run_tests(  # pylint: disable=too-many-locals,too-many-arguments
             destinations_by_name,
             ignore_exception_types,
             all_test_results,
+            debug_args
         )
 
         if not all_test_results:
@@ -1235,6 +1254,7 @@ def run_tests(  # pylint: disable=too-many-arguments
     destinations_by_name: Dict[str, FakeDestination],
     ignore_exception_types: List[Type[Exception]],
     all_test_results: typing.Optional[TestResultsContainer],
+    debug_args: dict
 ) -> DefaultDict[str, list]:
     if len(analysis.get("Tests", [])) < minimum_tests:
         failed_tests[detection.detection_id].append(
@@ -1256,6 +1276,7 @@ def run_tests(  # pylint: disable=too-many-arguments
         destinations_by_name,
         ignore_exception_types,
         all_test_results,
+        debug_args
     )
 
     if minimum_tests > 1 and not (
@@ -1277,10 +1298,17 @@ def _run_tests(  # pylint: disable=too-many-arguments
     destinations_by_name: Dict[str, FakeDestination],
     ignore_exception_types: List[Type[Exception]],
     all_test_results: typing.Optional[TestResultsContainer],
+    debug_args: dict
 ) -> DefaultDict[str, list]:
     status_passed = "passed"
     status_errored = "errored"
+    debug_test_found = False
     for unit_test in tests:
+        if debug_args.get('debug'):
+            if unit_test['Name'] != debug_args['test_name']:
+                continue
+            else:
+                debug_test_found = True
         test_output = ""
         try:
             entry = unit_test.get("Resource") or unit_test["Log"]
@@ -1297,6 +1325,8 @@ def _run_tests(  # pylint: disable=too-many-arguments
             if detection.detection_type.upper() != TYPE_POLICY.upper():
                 test_case = PantherEvent(entry, analysis_data_models.get(log_type))
             test_output_buf = io.StringIO()
+            if debug_args.get('debug'):
+                test_output_buf = sys.stdout # In debug mode, allow rules to print to console
             with contextlib.redirect_stdout(test_output_buf), contextlib.redirect_stderr(
                 test_output_buf
             ):
@@ -1307,7 +1337,9 @@ def _run_tests(  # pylint: disable=too-many-arguments
                         )
                 else:
                     result = detection.run(test_case, {}, destinations_by_name, batch_mode=False)
-            test_output = test_output_buf.getvalue()
+            test_output = ""
+            if not debug_args.get('debug'):
+                test_output = test_output_buf.getvalue()
         except (AttributeError, KeyError) as err:
             logging.warning("AttributeError: {%s}", err)
             logging.debug(str(err), exc_info=err)
@@ -1353,6 +1385,8 @@ def _run_tests(  # pylint: disable=too-many-arguments
         else:
             _print_test_result(detection, test_result, failed_tests)
 
+    if not debug_test_found:
+        logging.warning(f"No test with name {debug_args['test_name']}.")
     return failed_tests
 
 
@@ -1582,6 +1616,30 @@ def setup_parser() -> argparse.ArgumentParser:
     test_parser.add_argument(ignore_table_names_name, **ignore_table_names_arg)
     test_parser.add_argument(valid_table_names_name, **valid_table_names_arg)
     test_parser.set_defaults(func=pat_utils.func_with_optional_backend(test_analysis))
+
+    # -- debug command
+
+    debug_help_text = "Validate analysis specifications and run policy and rule tests."
+    debug_parser = subparsers.add_parser(
+        "debug",
+        help=debug_help_text,
+        description=debug_help_text,
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    standard_args.for_public_api(debug_parser, required=False)
+    debug_parser.add_argument('ruleid')
+    debug_parser.add_argument('testid')
+    debug_parser.add_argument(filter_name, **filter_arg)
+    # debug_parser.add_argument(min_test_name, **min_test_arg.update(default=0))
+    debug_parser.add_argument(path_name, **path_arg)
+    debug_parser.add_argument(ignore_extra_keys_name, **ignore_extra_keys_arg)
+    debug_parser.add_argument(ignore_files_name, **ignore_files_arg)
+    debug_parser.add_argument(skip_disabled_test_name, **skip_disabled_test_arg)
+    debug_parser.add_argument(available_destination_name, **available_destination_arg)
+    # debug_parser.add_argument(sort_test_results_name, **sort_test_results_arg.update(default=False))
+    debug_parser.add_argument(ignore_table_names_name, **ignore_table_names_arg)
+    debug_parser.add_argument(valid_table_names_name, **valid_table_names_arg)
+    debug_parser.set_defaults(func=pat_utils.func_with_optional_backend(debug_analysis))
 
     # -- publish command
 
