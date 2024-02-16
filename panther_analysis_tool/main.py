@@ -84,10 +84,12 @@ from panther_analysis_tool import util as pat_utils
 from panther_analysis_tool.analysis_utils import (
     ClassifiedAnalysis,
     ClassifiedAnalysisContainer,
+    disable_all_base_detections,
     filter_analysis,
     get_simple_detections_as_python,
     load_analysis_specs,
     load_analysis_specs_ex,
+    lookup_base_detection,
     transpile_inline_filters,
 )
 from panther_analysis_tool.backend.client import (
@@ -96,6 +98,10 @@ from panther_analysis_tool.backend.client import (
     BulkUploadParams,
 )
 from panther_analysis_tool.backend.client import Client as BackendClient
+from panther_analysis_tool.backend.client import (
+    FeatureFlagsParams,
+    FeatureFlagWithDefault,
+)
 from panther_analysis_tool.command import (
     benchmark,
     bulk_delete,
@@ -107,6 +113,7 @@ from panther_analysis_tool.constants import (
     BACKEND_FILTERS_ANALYSIS_SPEC_KEY,
     CONFIG_FILE,
     DATA_MODEL_LOCATION,
+    ENABLE_CORRELATION_RULES_FLAG,
     HELPERS_LOCATION,
     PACKAGE_NAME,
     SCHEMAS,
@@ -119,6 +126,7 @@ from panther_analysis_tool.enriched_event_generator import EnrichedEventGenerato
 from panther_analysis_tool.log_schemas import user_defined
 from panther_analysis_tool.schemas import (
     ANALYSIS_CONFIG_SCHEMA,
+    DERIVED_SCHEMA,
     GLOBAL_SCHEMA,
     LOOKUP_TABLE_SCHEMA,
     POLICY_SCHEMA,
@@ -126,8 +134,10 @@ from panther_analysis_tool.schemas import (
     TYPE_SCHEMA,
 )
 from panther_analysis_tool.util import (
+    BackendNotFoundException,
     add_path_to_filename,
     convert_unicode,
+    is_correlation_rule,
     is_simple_detection,
 )
 from panther_analysis_tool.validation import (
@@ -245,6 +255,7 @@ def zip_analysis_chunks(args: argparse.Namespace) -> List[str]:
         ZipChunk(patterns=[], types=AnalysisTypes.SCHEDULED_QUERY, max_size=100),  # type: ignore
         ZipChunk(patterns=[], types=AnalysisTypes.SCHEDULED_RULE, max_size=200),  # type: ignore
         ZipChunk(patterns=[], types=AnalysisTypes.LOOKUP_TABLE, max_size=100),  # type: ignore
+        ZipChunk(patterns=[], types=AnalysisTypes.CORRELATION_RULE, max_size=200),  # type: ignore
     ]
 
     filenames = []
@@ -310,6 +321,10 @@ def upload_analysis(backend: BackendClient, args: argparse.Namespace) -> Tuple[i
     Returns:
         A tuple of return code and error if applicable.
     """
+    if args.auto_disable_base:
+        zipargs = ZipArgs.from_args(args)
+        disable_all_base_detections([zipargs.path], zipargs.ignore_files)
+
     use_async = (not args.no_async) and backend.supports_async_uploads()
     if args.batch and not use_async:
         if not args.skip_tests:
@@ -359,7 +374,18 @@ def upload_zip(
                 else:
                     response = backend.bulk_upload(upload_params)
 
-                logging.info("API Response:\n%s", json.dumps(asdict(response.data), indent=4))
+                resp_dict = asdict(response.data)
+                flags_params = FeatureFlagsParams(
+                    flags=[FeatureFlagWithDefault(flag=ENABLE_CORRELATION_RULES_FLAG)]
+                )
+                try:
+                    if not backend.feature_flags(flags_params).data.flags[0].treatment:
+                        del resp_dict["correlation_rules"]
+                # pylint: disable=broad-except
+                except BaseException:
+                    del resp_dict["correlation_rules"]
+
+                logging.info("API Response:\n%s", json.dumps(resp_dict, indent=4))
                 return 0, cli_output.success("Upload succeeded")
 
             except BackendError as be_err:
@@ -658,26 +684,48 @@ def upload_assets_github(upload_url: str, headers: dict, release_dir: str) -> in
     return return_code
 
 
-def debug_analysis(
-    args: argparse.Namespace, backend: typing.Optional[BackendClient] = None,
-):
-    debug_args = {
-        'debug': True,
-        'test_name': args.testid
-    }
-    args.filter = {
-        'RuleID': [args.ruleid]
-    }
-    # I don't want these options to appear in the --help command, but they need
-    # default values for seamless integration with test_analysis
-    args.minimum_tests = 0
-    args.sort_test_results = False
-    return test_analysis(args, backend, debug_args=debug_args)
+def load_analysis(
+    path: str, ignore_table_names: bool, valid_table_names: List[str], ignore_files: List[str]
+) -> Tuple[Any, List[Any]]:
+    """Loads each policy or rule into memory.
+
+    Args:
+        path: path to root folder with rules and policies
+        ignore_table_names: validate or ignore table names
+        valid_table_names: list of valid table names, other will be treated as invalid
+        ignore_files: Files that Panther Analysis Tool should not process
+
+    Returns:
+        A tuple of the valid and invalid rules and policies
+    """
+    search_directories = [path]
+    for directory in (
+        HELPERS_LOCATION,
+        "." + HELPERS_LOCATION,  # Try the parent directory as well
+        DATA_MODEL_LOCATION,
+        "." + DATA_MODEL_LOCATION,  # Try the parent directory as well
+    ):
+        absolute_dir_path = os.path.abspath(os.path.join(path, directory))
+        absolute_helper_path = os.path.abspath(directory)
+
+        if os.path.exists(absolute_dir_path):
+            search_directories.append(absolute_dir_path)
+        if os.path.exists(absolute_helper_path):
+            search_directories.append(absolute_helper_path)
+
+    # First classify each file, always include globals and data models location
+    specs, invalid_specs = classify_analysis(
+        list(load_analysis_specs(search_directories, ignore_files)),
+        ignore_table_names=ignore_table_names,
+        valid_table_names=valid_table_names,
+    )
+
+    return specs, invalid_specs
+
 
 # pylint: disable=too-many-locals
 def test_analysis(
-    args: argparse.Namespace, backend: typing.Optional[BackendClient] = None,
-    debug_args: dict = {}
+    args: argparse.Namespace, backend: typing.Optional[BackendClient] = None
 ) -> Tuple[int, list]:
     """Imports each policy or rule and runs their tests.
 
@@ -689,30 +737,10 @@ def test_analysis(
     """
     logging.info("Testing analysis items in %s\n", args.path)
 
-    ignored_files = args.ignore_files
-    search_directories = [args.path]
-
-    for directory in (
-        HELPERS_LOCATION,
-        "." + HELPERS_LOCATION,  # Try the parent directory as well
-        DATA_MODEL_LOCATION,
-        "." + DATA_MODEL_LOCATION,  # Try the parent directory as well
-    ):
-        absolute_dir_path = os.path.abspath(os.path.join(args.path, directory))
-        absolute_helper_path = os.path.abspath(directory)
-
-        if os.path.exists(absolute_dir_path):
-            search_directories.append(absolute_dir_path)
-        if os.path.exists(absolute_helper_path):
-            search_directories.append(absolute_helper_path)
-
     # First classify each file, always include globals and data models location
-    specs, invalid_specs = classify_analysis(
-        list(load_analysis_specs(search_directories, ignore_files=ignored_files)),
-        ignore_table_names=args.ignore_table_names,
-        valid_table_names=args.valid_table_names,
+    specs, invalid_specs = load_analysis(
+        args.path, args.ignore_table_names, args.valid_table_names, args.ignore_files
     )
-
     if specs.empty():
         if invalid_specs:
             return 1, invalid_specs
@@ -768,6 +796,7 @@ def test_analysis(
         destinations_by_name=destinations_by_name,
         ignore_exception_types=ignore_exception_types,
         all_test_results=all_test_results,
+        backend=backend,
         debug_args=debug_args
     )
     invalid_specs.extend(invalid_detections)
@@ -899,7 +928,7 @@ def setup_data_models(
     return log_type_to_data_model, invalid_specs
 
 
-def setup_run_tests(  # pylint: disable=too-many-locals,too-many-arguments
+def setup_run_tests(  # pylint: disable=too-many-locals,too-many-arguments,too-many-statements
     log_type_to_data_model: Dict[str, DataModel],
     analysis: List[ClassifiedAnalysis],
     minimum_tests: int,
@@ -907,6 +936,7 @@ def setup_run_tests(  # pylint: disable=too-many-locals,too-many-arguments
     destinations_by_name: Dict[str, FakeDestination],
     ignore_exception_types: List[Type[Exception]],
     all_test_results: typing.Optional[TestResultsContainer] = None,
+    backend: typing.Optional[BackendClient] = None,
     debug_args: dict = {}
 ) -> Tuple[DefaultDict[str, List[Any]], List[Any]]:
     invalid_specs = []
@@ -926,13 +956,58 @@ def setup_run_tests(  # pylint: disable=too-many-locals,too-many-arguments
             filters=analysis_spec.get(BACKEND_FILTERS_ANALYSIS_SPEC_KEY) or None,
         )
 
-        if is_simple_detection(analysis_spec):
+        if is_correlation_rule(analysis_spec):
+            logging.warning(
+                "Skipping Correlation Rule '%s', testing not supported", analysis_spec.get("RuleID")
+            )
+            continue
+
+        base_id = analysis_spec.get("BaseDetection", "")
+        if base_id != "":
+            # this is a derived detection
+            found_base_detection = None
+            found_base_path = None
+            found_base_tests = None
+            for other_item in analysis:
+                if other_item.analysis_spec.get("RuleID", "") != base_id:
+                    continue
+                found_base_detection = other_item.analysis_spec
+                found_base_path = other_item.dir_name
+                found_base_tests = other_item.analysis_spec.get("Tests")
+                break
+            # inherit the tests from the base if we dont have any
+            if "Tests" not in analysis_spec and found_base_tests:
+                analysis_spec["Tests"] = found_base_tests
+            if not found_base_detection:
+                base_lookup = lookup_base_detection(base_id, backend)
+                if "body" in base_lookup:
+                    found_base_detection = base_lookup
+                if "tests" in base_lookup and "Tests" not in analysis_spec:
+                    tests = base_lookup["tests"]
+                    if len(tests) > 0:
+                        analysis_spec["Tests"] = tests
+            if not found_base_detection:
+                logging.warning(
+                    "Skipping Derived Detection '%s', could not lookup base detection '%s'",
+                    analysis_spec.get("RuleID"),
+                    base_id,
+                )
+                continue
+            if "body" in found_base_detection:
+                detection_args["body"] = found_base_detection.get("body")
+            else:
+                detection_args["path"] = os.path.join(
+                    found_base_path, found_base_detection["Filename"]  # type: ignore
+                )
+        elif is_simple_detection(analysis_spec):
             # skip tests when the body is empty
             if not analysis_spec.get("body"):
                 continue
             detection_args["body"] = analysis_spec.get("body")
         else:
             detection_args["path"] = os.path.join(dir_name, analysis_spec["Filename"])
+        if "CreateAlert" in analysis_spec:
+            detection_args["suppressAlert"] = not bool(analysis_spec["CreateAlert"])
 
         detection = (
             Policy(detection_args)
@@ -1026,8 +1101,10 @@ def classify_analysis(
             # validate the schema has a valid analysis type
             TYPE_SCHEMA.validate(analysis_spec)
             analysis_type = analysis_spec["AnalysisType"]
-            # validate the particular analysis type schema
-            analysis_schema = SCHEMAS[analysis_type]
+            if analysis_spec.get("BaseDetection"):
+                analysis_schema = SCHEMAS["derived"]
+            else:
+                analysis_schema = SCHEMAS[analysis_type]
             keys = list(analysis_schema.schema.keys())
             # Special case for ScheduledQueries to only validate the types
             if "ScheduledQueries" in analysis_spec:
@@ -1038,7 +1115,9 @@ def classify_analysis(
                 if not tmp_logtypes:
                     tmp_logtypes = analysis_schema.schema[tmp_logtypes_key]
                 analysis_schema.schema[tmp_logtypes_key] = [str]
+
             analysis_schema.validate(analysis_spec)
+
             # lookup the analysis type id and validate there aren't any conflicts
             analysis_id = lookup_analysis_id(analysis_spec, analysis_type)
             if analysis_id in analysis_ids:
@@ -1215,6 +1294,68 @@ def enrich_test_data(backend: BackendClient, args: argparse.Namespace) -> Tuple[
     return (0, result_str)
 
 
+def check_packs(args: argparse.Namespace) -> Tuple[int, str]:
+    """
+    Checks each existing pack whether it includes all necessary rules.
+    """
+    specs, _ = load_analysis(args.path, True, [], [])
+
+    analysis_type_to_key_mapping = {
+        AnalysisTypes.POLICY: "PolicyID",
+        AnalysisTypes.RULE: "RuleID",
+        AnalysisTypes.SCHEDULED_RULE: "RuleID",
+    }
+    packs_with_missing_detections = {}
+    for pack in specs.packs:
+        pack_file_name = pack.file_name.replace(".yml", "").split("/")[-1]
+        included_rules = []
+        detections = [detection for detection in specs.detections if not detection.is_deprecated()]
+        detections.extend(
+            [detection for detection in specs.simple_detections if not detection.is_deprecated()]
+        )
+        is_simple_pack = "Simple" in pack.analysis_spec.get("PackID", "").split(".")
+        for detection in detections:
+            is_simple_rule = "Simple" in detection.analysis_spec.get("RuleID", "").split(".")
+            if is_simple_pack != is_simple_rule:
+                # simple rules should be in simple packs
+                continue
+            requires_configuration = [
+                x for x in detection.analysis_spec.get("Tags", []) if "Configuration Required" in x
+            ]
+            if requires_configuration:
+                # skip detections that require configuration
+                continue
+            # remove leading ./
+            # ./some-dir -> some-dir
+            dir_name = detection.dir_name.strip("./")
+
+            # rules/asana_rules/asana_service_account_created -> [rules, asana_rules, asana_service_account_created]
+            # if pack name is "asana" we can assume that the detection is part of the pack
+            path_to_detection = detection.file_name[detection.file_name.find(dir_name) :]
+            pieces = path_to_detection.split("/")
+
+            # packs with "simple" rules have "_simple" suffix
+            pack_name = pack_file_name
+            if is_simple_pack:
+                pack_name = pack_file_name.replace("_simple", "")
+            matching_pieces = [piece.startswith(pack_name) for piece in pieces]
+            if any(matching_pieces):
+                key = analysis_type_to_key_mapping[detection.analysis_spec["AnalysisType"]]
+                included_rules.append(detection.analysis_spec[key])
+
+        diff = set(included_rules).difference(set(pack.analysis_spec["PackDefinition"]["IDs"]))
+        if diff:
+            packs_with_missing_detections[pack_file_name] = list(diff)
+
+    if packs_with_missing_detections:
+        error_string = "There are packs that are potentially missing detections:\n"
+        for pack_file_name, detections in packs_with_missing_detections.items():
+            detections_str = ",".join(detections)
+            error_string += f"{pack_file_name}.yml: {detections_str}\n\n"
+        return 1, error_string
+    return 0, "Looks like packs are up to date"
+
+
 def lookup_analysis_id(analysis_spec: Any, analysis_type: str) -> str:
     analysis_id = "UNKNOWN_ID"
     if analysis_type == AnalysisTypes.DATA_MODEL:
@@ -1229,7 +1370,13 @@ def lookup_analysis_id(analysis_spec: Any, analysis_type: str) -> str:
         analysis_id = analysis_spec["PolicyID"]
     elif analysis_type == AnalysisTypes.SCHEDULED_QUERY:
         analysis_id = analysis_spec["QueryName"]
-    elif analysis_type in [AnalysisTypes.RULE, AnalysisTypes.SCHEDULED_RULE]:
+    elif analysis_type == AnalysisTypes.SAVED_QUERY:
+        analysis_id = analysis_spec["QueryName"]
+    elif analysis_type in [
+        AnalysisTypes.RULE,
+        AnalysisTypes.SCHEDULED_RULE,
+        AnalysisTypes.CORRELATION_RULE,
+    ]:
         analysis_id = analysis_spec["RuleID"]
     return analysis_id
 
@@ -1369,6 +1516,15 @@ def _run_tests(  # pylint: disable=too-many-arguments
         test_result = TestCaseEvaluator(spec, result).interpret(
             ignore_exception_types=ignore_exception_types
         )
+        if detection.suppress_alert:
+            # only keep alert context function
+            test_result.functions.dedupFunction = None
+            test_result.functions.destinationsFunction = None
+            test_result.functions.runbookFunction = None
+            test_result.functions.titleFunction = None
+            test_result.functions.severityFunction = None
+            test_result.functions.descriptionFunction = None
+            test_result.functions.referenceFunction = None
 
         if all_test_results:
             test_result_str = status_passed if test_result.passed else status_errored
@@ -1563,6 +1719,7 @@ def setup_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=VERSION_STRING)
     parser.add_argument("--debug", action="store_true", dest="debug")
+    parser.add_argument("--skip-version-check", dest="skip_version_check", action="store_true")
     subparsers = parser.add_subparsers()
 
     # -- release command
@@ -1709,6 +1866,13 @@ def setup_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     upload_parser.add_argument(
+        "--auto-disable-base",
+        help="If uploading derived detections, set the corresponding base detection's Enabled status to false prior to upload",
+        default=False,
+        required=False,
+        action="store_true",
+    )
+    upload_parser.add_argument(
         "--max-retries",
         help="Retry to upload on a failure for a maximum number of times",
         default=10,
@@ -1844,7 +2008,7 @@ def setup_parser() -> argparse.ArgumentParser:
     validate_parser.add_argument(filter_name, **filter_arg)
     validate_parser.add_argument(ignore_files_name, **ignore_files_arg)
     validate_parser.add_argument(path_name, **path_arg)
-    validate_parser.set_defaults(func=pat_utils.func_with_backend(validate.run))
+    validate_parser.set_defaults(func=pat_utils.func_with_api_backend(validate.run))
 
     # -- zip command
 
@@ -1924,7 +2088,7 @@ def setup_parser() -> argparse.ArgumentParser:
         help="Required if the rule supports multiple log types, optional otherwise. Must be one of the rule's log"
         " types.",
     )
-    benchmark_parser.set_defaults(func=pat_utils.func_with_backend(benchmark.run))
+    benchmark_parser.set_defaults(func=pat_utils.func_with_api_backend(benchmark.run))
 
     # -- enrich-test-data command
     enrich_test_data_parser = subparsers.add_parser(
@@ -1939,6 +2103,15 @@ def setup_parser() -> argparse.ArgumentParser:
     enrich_test_data_parser.add_argument(ignore_table_names_name, **ignore_table_names_arg)
     enrich_test_data_parser.add_argument(valid_table_names_name, **valid_table_names_arg)
     enrich_test_data_parser.set_defaults(func=pat_utils.func_with_backend(enrich_test_data))
+
+    check_packs_parser = subparsers.add_parser(
+        "check-packs",
+        help="Ensure that packs don't have missing detections.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    check_packs_parser.add_argument(path_name, **path_arg)
+    check_packs_parser.set_defaults(func=check_packs)
+    standard_args.for_public_api(check_packs_parser, required=False)
 
     return parser
 
@@ -2040,20 +2213,22 @@ def run() -> None:
         format="[%(levelname)s][%(name)s]: %(message)s",
         level=logging.INFO,
     )
-    latest = pat_utils.get_latest_version()
-    if not pat_utils.is_latest(latest):
-        logging.warning(
-            "A new version of %s is available. To upgrade from version '%s' to '%s', run:\n\t"
-            "pip3 install %s --upgrade\n",
-            PACKAGE_NAME,
-            VERSION_STRING,
-            latest,
-            PACKAGE_NAME,
-        )
 
     parser = setup_parser()
     # if no args are passed, print the help output
     args = parser.parse_args(args=None if sys.argv[1:] else ["--help"])
+
+    if not args.skip_version_check:
+        latest = pat_utils.get_latest_version()
+        if not pat_utils.is_latest(latest):
+            logging.warning(
+                "A new version of %s is available. To upgrade from version '%s' to '%s', run:\n\t"
+                "pip3 install %s --upgrade\n",
+                PACKAGE_NAME,
+                VERSION_STRING,
+                latest,
+                PACKAGE_NAME,
+            )
 
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
@@ -2088,9 +2263,13 @@ def run() -> None:
     if bool(getattr(args, "ignore_extra_keys", None)):
         RULE_SCHEMA._ignore_extra_keys = True  # pylint: disable=protected-access
         POLICY_SCHEMA._ignore_extra_keys = True  # pylint: disable=protected-access
+        DERIVED_SCHEMA._ignore_extra_keys = True  # pylint: disable=protected-access
 
     try:
         return_code, out = args.func(args)
+    except BackendNotFoundException as err:
+        logging.error('Backend not found: "%s"', err)
+        sys.exit(1)
     except Exception as err:  # pylint: disable=broad-except
         # Catch arbitrary exceptions without printing help message
         logging.warning('Unhandled exception: "%s"', err, exc_info=err, stack_info=True)

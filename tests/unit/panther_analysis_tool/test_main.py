@@ -24,7 +24,7 @@ from datetime import datetime
 from unittest import mock
 
 import jsonschema
-from nose.tools import assert_equal, assert_is_instance, assert_true
+from nose.tools import assert_equal, assert_in, assert_is_instance, assert_true
 from panther_core.data_model import _DATAMODEL_FOLDER
 from pyfakefs.fake_filesystem_unittest import Pause, TestCase
 from schema import SchemaWrongKeyError
@@ -34,8 +34,12 @@ from panther_analysis_tool import util
 from panther_analysis_tool.backend.client import (
     BackendError,
     BackendResponse,
+    BulkUploadResponse,
+    BulkUploadStatistics,
     BulkUploadValidateResult,
     BulkUploadValidateStatusResponse,
+    GetRuleBodyParams,
+    GetRuleBodyResponse,
     TranspileFiltersResponse,
     TranspileToPythonResponse,
     UnsupportedEndpointError,
@@ -109,19 +113,13 @@ class TestPantherAnalysisTool(TestCase):
                 assert_true(loaded_spec != {})
 
     def test_ignored_files_are_not_loaded(self):
-        for spec_filename, _, loaded_spec, _ in pat.load_analysis_specs(
-            [DETECTIONS_FIXTURES_PATH], ignore_files=["./example_ignored.yml"]
-        ):
-            assert_true(loaded_spec != "example_ignored.yml")
-
-    def test_multiple_ignored_files_are_not_loaded(self):
-        for spec_filename, _, loaded_spec, _ in pat.load_analysis_specs(
-            [DETECTIONS_FIXTURES_PATH],
-            ignore_files=["./example_ignored.yml", "./example_ignored_multi.yml"],
-        ):
-            assert_true(
-                loaded_spec != "example_ignored.yml" and loaded_spec != "example_ignored_multi.yml"
-            )
+        args = pat.setup_parser().parse_args(
+            f"test --path {DETECTIONS_FIXTURES_PATH}/example_malformed_yaml --ignore-files {DETECTIONS_FIXTURES_PATH}/example_malformed_yaml.yml".split()
+        )
+        args.filter_inverted = {}
+        return_code, invalid_specs = pat.test_analysis(args)
+        assert_equal(return_code, 1)  # no specs throws error
+        assert_in("Nothing to test in", invalid_specs[0])
 
     def test_valid_yaml_policy_spec(self):
         for spec_filename, _, loaded_spec, _ in pat.load_analysis_specs(
@@ -436,7 +434,7 @@ class TestPantherAnalysisTool(TestCase):
             assert_true(statinfo.st_size > 0)
             assert_true(out_filename.endswith(".zip"))
 
-        assert_equal(6, len(results))
+        assert_equal(7, len(results))
 
     def test_generate_release_assets(self):
         # Note: This is a workaround for CI
@@ -452,6 +450,37 @@ class TestPantherAnalysisTool(TestCase):
         analysis_file = "tmp/release/panther-analysis-all.zip"
         statinfo = os.stat(analysis_file)
         assert_true(statinfo.st_size > 0)
+        assert_equal(return_code, 0)
+
+    def test_feature_flags_dont_err_the_upload(self):
+        backend = MockBackend()
+        backend.feature_flags = mock.MagicMock(
+            side_effect=BaseException("something about the lambda doesnt support your request")
+        )
+        stats = BulkUploadStatistics(
+            new=2,
+            total=3,
+            modified=4,
+        )
+        backend.bulk_upload = mock.MagicMock(
+            return_value=BackendResponse(
+                data=BulkUploadResponse(
+                    rules=stats,
+                    queries=stats,
+                    policies=stats,
+                    data_models=stats,
+                    lookup_tables=stats,
+                    global_helpers=stats,
+                    correlation_rules=stats,
+                ),
+                status_code=200,
+            )
+        )
+
+        args = pat.setup_parser().parse_args(
+            f"--debug upload --path {DETECTIONS_FIXTURES_PATH}/valid_analysis".split()
+        )
+        return_code, _ = pat.upload_analysis(backend, args)
         assert_equal(return_code, 0)
 
     def test_retry_uploads(self):
@@ -676,6 +705,74 @@ class TestPantherAnalysisTool(TestCase):
         assert_equal(return_code, 0)
         assert_equal(len(invalid_specs), 0)
 
+    def test_can_retrieve_base_detection_for_test(self):
+        import logging
+
+        with Pause(self.fs):
+            file_path = f"{FIXTURES_PATH}/derived_without_base"
+            backend = MockBackend()
+            backend.get_rule_body = mock.MagicMock(
+                return_value=BackendResponse(
+                    data=GetRuleBodyResponse(body="def rule(_):\n\treturn False", tests=[]),
+                    status_code=200,
+                )
+            )
+            with mock.patch.multiple(
+                logging, debug=mock.DEFAULT, warning=mock.DEFAULT, info=mock.DEFAULT
+            ) as logging_mocks:
+                logging.warn("to instantiate the warning call args")
+                args = pat.setup_parser().parse_args(f"test " f"--path " f" {file_path}".split())
+                return_code, invalid_specs = pat.test_analysis(args, backend=backend)
+                warning_logs = logging_mocks["warning"].call_args.args
+                # assert that we were able to look up the base of this derived detection
+                assert_true(all("Skipping Derived Detection" not in s for s in warning_logs))
+        assert_equal(return_code, 0)
+        assert_equal(len(invalid_specs), 0)
+
+    def test_logs_warning_if_cannot_retrieve_base(self):
+        import logging
+
+        with Pause(self.fs):
+            file_path = f"{FIXTURES_PATH}/derived_without_base"
+            backend = MockBackend()
+            # we mock a response for getting an error when retrieving the base
+            backend.get_rule_body = mock.MagicMock(
+                return_value=BackendResponse(
+                    data=GetRuleBodyResponse(
+                        body="i am writing a unit test i can write anything i want here", tests=[]
+                    ),
+                    status_code=403,
+                )
+            )
+            with mock.patch.multiple(
+                logging, debug=mock.DEFAULT, warning=mock.DEFAULT, info=mock.DEFAULT
+            ) as logging_mocks:
+                logging.warn("to instantiate the warning call args")
+                args = pat.setup_parser().parse_args(f"test " f"--path " f" {file_path}".split())
+                return_code, invalid_specs = pat.test_analysis(args, backend=backend)
+                warning_logs = logging_mocks["warning"].call_args.args
+                # assert that we skipped because we could not lookup base
+                assert_true(any("Skipping Derived Detection" in s for s in warning_logs))
+        assert_equal(return_code, 0)
+        assert_equal(len(invalid_specs), 0)
+
+    def test_can_inherit_tests_from_base(self):
+        import sys
+        from io import StringIO
+
+        old_stdout = sys.stdout
+        sys.stdout = mystdout = StringIO()
+        with Pause(self.fs):
+            file_path = f"{FIXTURES_PATH}/tests_can_be_inherited"
+            args = pat.setup_parser().parse_args(f"test " f"--path " f" {file_path}".split())
+            return_code, invalid_specs = pat.test_analysis(args)
+        sys.stdout = old_stdout
+        assert_equal(return_code, 0)
+        assert_equal(len(invalid_specs), 0)
+        stdout_str = mystdout.getvalue()
+        assert_equal(stdout_str.count("[PASS] t1"), 2)
+        assert_equal(stdout_str.count("[PASS] t2"), 2)
+
     def test_bulk_validate_happy_path(self):
         backend = MockBackend()
         backend.supports_bulk_validate = mock.MagicMock(return_value=True)
@@ -721,7 +818,7 @@ class TestPantherAnalysisTool(TestCase):
         return_code, return_str = validate.run(backend, args)
         assert_equal(return_code, 1)
         assert_true(
-            "bulk validate is only supported via the api token" in return_str,
+            "Invalid backend. `validate` is only supported via API token" in return_str,
             f"match not found in {return_str}",
         )
 

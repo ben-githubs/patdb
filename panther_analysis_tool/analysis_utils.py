@@ -30,6 +30,7 @@ from ruamel.yaml import scanner as YAMLScanner
 from panther_analysis_tool.backend.client import BackendError
 from panther_analysis_tool.backend.client import Client as BackendClient
 from panther_analysis_tool.backend.client import (
+    GetRuleBodyParams,
     TranspileFiltersParams,
     TranspileToPythonParams,
 )
@@ -53,6 +54,17 @@ class ClassifiedAnalysis:
         self.file_name = file_name
         self.dir_name = dir_name
         self.analysis_spec = analysis_spec
+
+    def is_deprecated(self) -> bool:
+        display_name = self.analysis_spec["DisplayName"]
+        description = self.analysis_spec.get("Description", "")
+        if "deprecated" in display_name.lower() or "deprecated" in description.lower():
+            return True
+
+        tags = {tag.lower() for tag in self.analysis_spec.get("Tags", [])}
+        if "deprecated" in tags:
+            return True
+        return False
 
 
 @dataclasses.dataclass
@@ -111,6 +123,7 @@ class ClassifiedAnalysisContainer:
             AnalysisTypes.POLICY,
             AnalysisTypes.RULE,
             AnalysisTypes.SCHEDULED_RULE,
+            AnalysisTypes.CORRELATION_RULE,
         ]:
             self.detections.append(classified_analysis)
         elif analysis_type == AnalysisTypes.DATA_MODEL:
@@ -184,6 +197,29 @@ def load_analysis_specs(
         yield result.spec_filename, result.relative_path, result.analysis_spec, result.error
 
 
+def disable_all_base_detections(paths: List[str], ignore_files: List[str]) -> None:
+    analysis_specs = list(load_analysis_specs_ex(paths, ignore_files, roundtrip_yaml=True))
+    base_ids_to_disable = set()
+    base_detection_key = "BaseDetection"
+    rule_id_key = "RuleID"
+    enabled_key = "Enabled"
+    for analysis_spec_res in analysis_specs:
+        spec: Dict[str, Any] = analysis_spec_res.analysis_spec
+        base_id = spec.get(base_detection_key, "")
+        if base_id == "":
+            continue
+        base_ids_to_disable.add(base_id)
+    for base_detection_id in base_ids_to_disable:
+        for analysis_spec_res in analysis_specs:
+            rule: Dict[str, Any] = analysis_spec_res.analysis_spec
+            if rule.get(rule_id_key, "") == base_detection_id:
+                logging.info(
+                    "Setting %s=False for %s", enabled_key, analysis_spec_res.spec_filename
+                )
+                rule[enabled_key] = False
+                analysis_spec_res.serialize_to_file()
+
+
 @dataclasses.dataclass
 class LoadAnalysisSpecsResult:
     """The result of loading analysis specifications from a file."""
@@ -233,7 +269,11 @@ class LoadAnalysisSpecsResult:
     def analysis_id(self) -> str:
         """Returns the analysis ID for this analysis spec."""
         analysis_type = self.analysis_spec["AnalysisType"]
-        if analysis_type in [AnalysisTypes.RULE, AnalysisTypes.SCHEDULED_RULE]:
+        if analysis_type in [
+            AnalysisTypes.RULE,
+            AnalysisTypes.SCHEDULED_RULE,
+            AnalysisTypes.CORRELATION_RULE,
+        ]:
             return self.analysis_spec["RuleID"]
         elif analysis_type == AnalysisTypes.POLICY:
             return self.analysis_spec["PolicyID"]
@@ -422,6 +462,29 @@ def get_simple_detections_as_python(
     else:
         logging.info("No backend client provided, skipping tests for simple detections.")
     return enriched_specs if enriched_specs else specs
+
+
+def lookup_base_detection(the_id: str, backend: Optional[BackendClient] = None) -> Dict[str, Any]:
+    """Attempts to lookup base detection via its id"""
+    out: Dict[str, Any] = {}
+    if backend is not None:
+        try:
+            params = GetRuleBodyParams(id=the_id)
+            response = backend.get_rule_body(params)
+            if response.status_code == 200:
+                out["body"] = response.data.body
+                out["tests"] = response.data.tests
+            else:
+                logging.warning(
+                    "Unexpected error getting base detection, status code %s", response.status_code
+                )
+        except (BackendError, BaseException) as be_err:  # pylint: disable=broad-except
+            logging.warning(
+                "Error getting base detection %s: %s",
+                the_id,
+                be_err,
+            )
+    return out
 
 
 def transpile_inline_filters(

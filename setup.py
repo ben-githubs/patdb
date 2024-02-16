@@ -21,18 +21,10 @@ install_requires = [
     "schema",
     "semver",
     "sqlfluff",
-    "panther_core",
+    "panther-core==0.7.3",
     "typing-extensions",
     "jsonlines",
 ]
-
-with open("requirements.txt") as f:
-    dependencies_with_versions = []
-    for dependency in f.readlines():
-        dependency_with_version = dependency.strip()
-        package_name = dependency_with_version.split("==")[0]
-        if package_name in install_requires:
-            dependencies_with_versions.append(dependency_with_version)
 
 setup(
     name="panther_analysis_tool",

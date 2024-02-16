@@ -17,6 +17,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 import datetime
+import json
 import logging
 import os
 import time
@@ -44,8 +45,13 @@ from .client import (
     DeleteDetectionsResponse,
     DeleteSavedQueriesParams,
     DeleteSavedQueriesResponse,
+    FeatureFlagsParams,
+    FeatureFlagsResponse,
+    FeatureFlagTreatment,
     GenerateEnrichedEventParams,
     GenerateEnrichedEventResponse,
+    GetRuleBodyParams,
+    GetRuleBodyResponse,
     ListSchemasParams,
     ListSchemasResponse,
     MetricsParams,
@@ -110,6 +116,9 @@ class PublicAPIRequests:
     def delete_saved_queries(self) -> DocumentNode:
         return self._load("delete_saved_queries")
 
+    def get_rule_body(self) -> DocumentNode:
+        return self._load("get_rule_body")
+
     def transpile_simple_detection_to_python(self) -> DocumentNode:
         return self._load("transpile_sdl")
 
@@ -133,6 +142,9 @@ class PublicAPIRequests:
 
     def generate_enriched_event_query(self) -> DocumentNode:
         return self._load("generate_enriched_event")
+
+    def feature_flags_query(self) -> DocumentNode:
+        return self._load("feature_flags")
 
     def _load(self, name: str) -> DocumentNode:
         if name not in self._cache:
@@ -231,6 +243,35 @@ class PublicAPIClient(Client):
 
             if status not in ["NOT_PROCESSED"]:
                 raise BackendError(f"unexpected status: {status}")
+
+    # This function was generated in whole or in part by GitHub Copilot.
+    def get_rule_body(self, params: GetRuleBodyParams) -> BackendResponse[GetRuleBodyResponse]:
+        query: DocumentNode = self._requests.get_rule_body()
+        params = {"input": params.id}  # type: ignore
+        res = self._safe_execute(query, variable_values=params)  # type: ignore
+        data = res.data.get("rulePythonBody", {})  # type: ignore
+        tests = data.get("tests", [])
+        out_tests = []
+        for test in tests:
+            out_mocks = []
+            for mock in test.get("mocks") or []:
+                out_mock = dict()
+                out_mock["ObjectName"] = mock["objectName"]
+                out_mock["ReturnValue"] = mock["returnValue"]
+                out_mocks.append(out_mock)
+            out_test = dict()
+            out_test["ExpectedResult"] = test["expectedResult"]
+            out_test["Name"] = test["name"]
+            out_test["Log"] = json.loads(test["resource"])
+            out_tests.append(out_test)
+
+        return BackendResponse(
+            status_code=200,
+            data=GetRuleBodyResponse(
+                body=data.get("pythonBody") or "",
+                tests=out_tests,
+            ),
+        )
 
     # This function was generated in whole or in part by GitHub Copilot.
     def transpile_simple_detection_to_python(
@@ -514,6 +555,29 @@ class PublicAPIClient(Client):
             status_code=200,
             data=GenerateEnrichedEventResponse(
                 enriched_event=enriched_event,
+            ),
+        )
+
+    def feature_flags(self, params: FeatureFlagsParams) -> BackendResponse[FeatureFlagsResponse]:
+        query = self._requests.feature_flags_query()
+        query_input = {
+            "input": {
+                "flags": [
+                    {"flag": flag.flag, "defaultTreatment": flag.default_treatment}
+                    for flag in params.flags
+                ]
+            }
+        }
+        res = self._safe_execute(query, variable_values=query_input)
+        data = res.data.get("featureFlags", {})  # type: ignore
+
+        return BackendResponse(
+            status_code=200,
+            data=FeatureFlagsResponse(
+                flags=[
+                    FeatureFlagTreatment(flag=flag.get("flag"), treatment=flag.get("treatment"))
+                    for flag in data.get("flags") or []
+                ]
             ),
         )
 
