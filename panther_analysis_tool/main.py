@@ -722,10 +722,26 @@ def load_analysis(
 
     return specs, invalid_specs
 
+def debug_analysis(
+    args: argparse.Namespace, backend: typing.Optional[BackendClient] = None,
+):
+    debug_args = {
+        'debug': True,
+        'test_name': args.testid
+    }
+    args.filter = {
+        'RuleID': [args.ruleid]
+    }
+    # I don't want these options to appear in the --help command, but they need
+    # default values for seamless integration with test_analysis
+    args.minimum_tests = 0
+    args.sort_test_results = False
+    return test_analysis(args, backend, debug_args=debug_args)
+
 
 # pylint: disable=too-many-locals
 def test_analysis(
-    args: argparse.Namespace, backend: typing.Optional[BackendClient] = None
+    args: argparse.Namespace, backend: typing.Optional[BackendClient] = None, debug_args: dict = {}
 ) -> Tuple[int, list]:
     """Imports each policy or rule and runs their tests.
 
