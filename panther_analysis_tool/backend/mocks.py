@@ -11,8 +11,12 @@ from panther_analysis_tool.backend.client import Client as BackendClient
 from panther_analysis_tool.backend.client import (
     DeleteDetectionsParams,
     DeleteSavedQueriesParams,
+    FeatureFlagsParams,
+    FeatureFlagsResponse,
     GenerateEnrichedEventParams,
     GenerateEnrichedEventResponse,
+    GetRuleBodyParams,
+    GetRuleBodyResponse,
     ListSchemasParams,
     MetricsParams,
     MetricsResponse,
@@ -50,6 +54,9 @@ class MockBackend(BackendClient):
     def supports_async_uploads(self) -> bool:
         pass
 
+    def get_rule_body(self, params: GetRuleBodyParams) -> BackendResponse[GetRuleBodyResponse]:
+        pass
+
     def transpile_simple_detection_to_python(
         self, params: TranspileToPythonParams
     ) -> BackendResponse[Any]:
@@ -81,4 +88,7 @@ class MockBackend(BackendClient):
     def generate_enriched_event_input(
         self, params: GenerateEnrichedEventParams
     ) -> BackendResponse[GenerateEnrichedEventResponse]:
+        pass
+
+    def feature_flags(self, params: FeatureFlagsParams) -> BackendResponse[FeatureFlagsResponse]:
         pass

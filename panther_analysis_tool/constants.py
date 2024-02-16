@@ -5,7 +5,9 @@ from typing import Dict, Final
 from schema import Schema
 
 from panther_analysis_tool.schemas import (
+    CORRELATION_RULE_SCHEMA,
     DATA_MODEL_SCHEMA,
+    DERIVED_SCHEMA,
     GLOBAL_SCHEMA,
     LOOKUP_TABLE_SCHEMA,
     PACK_SCHEMA,
@@ -17,7 +19,7 @@ from panther_analysis_tool.schemas import (
 
 PACKAGE_NAME: Final = "panther_analysis_tool"
 
-VERSION_STRING: Final = "0.28.0"
+VERSION_STRING: Final = "0.40.0"
 
 CONFIG_FILE = ".panther_settings.yml"
 DATA_MODEL_LOCATION = "./data_models"
@@ -43,8 +45,10 @@ class AnalysisTypes:
     SAVED_QUERY = "saved_query"
     SCHEDULED_QUERY = "scheduled_query"
     RULE = "rule"
+    DERIVED = "derived"
     SCHEDULED_RULE = "scheduled_rule"
     SIMPLE_DETECTION = "simple_detection"
+    CORRELATION_RULE = "correlation_rule"
 
 
 # The UserID is required by Panther for some API calls, but we have no way of
@@ -74,7 +78,9 @@ SCHEMAS: Dict[str, Schema] = {
     AnalysisTypes.SAVED_QUERY: SAVED_QUERY_SCHEMA,
     AnalysisTypes.SCHEDULED_QUERY: SCHEDULED_QUERY_SCHEMA,
     AnalysisTypes.RULE: RULE_SCHEMA,
+    AnalysisTypes.DERIVED: DERIVED_SCHEMA,
     AnalysisTypes.SCHEDULED_RULE: RULE_SCHEMA,
+    AnalysisTypes.CORRELATION_RULE: CORRELATION_RULE_SCHEMA,
 }
 
 SET_FIELDS = [
@@ -96,3 +102,6 @@ class ReplayStatus:
     ERROR_COMPUTATION = "ERROR_COMPUTATION"
     EVALUATION_IN_PROGRESS = "EVALUATION_IN_PROGRESS"
     COMPUTATION_IN_PROGRESS = "COMPUTATION_IN_PROGRESS"
+
+
+ENABLE_CORRELATION_RULES_FLAG = "EnableCorrelationRules"

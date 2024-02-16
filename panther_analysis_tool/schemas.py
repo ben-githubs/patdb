@@ -56,6 +56,7 @@ RESOURCE_TYPE_REGEX = Regex(
 TYPE_SCHEMA = Schema(
     {
         "AnalysisType": Or(
+            "correlation_rule",
             "datamodel",
             "global",
             "pack",
@@ -189,9 +190,60 @@ RULE_SCHEMA = Schema(
         Optional("AlertTitle"): str,
         Optional("AlertContext"): object,
         Optional("GroupBy"): object,
+        Optional("CreateAlert"): bool,
     },
     ignore_extra_keys=False,
 )  # Prevent user typos on optional fields
+
+DERIVED_SCHEMA = Schema(
+    {
+        "AnalysisType": "rule",
+        "RuleID": And(str, NAME_ID_VALIDATION_REGEX),
+        "BaseDetection": And(str, NAME_ID_VALIDATION_REGEX),
+        Optional("Enabled"): bool,
+        Optional("Severity"): Or("Info", "Low", "Medium", "High", "Critical"),
+        Optional("Description"): str,
+        Optional("DedupPeriodMinutes"): int,
+        Optional("InlineFilters"): object,
+        Optional("DisplayName"): And(str, NAME_ID_VALIDATION_REGEX),
+        Optional("OnlyUseBaseRiskScore"): bool,
+        Optional("OutputIds"): [str],
+        Optional("Reference"): str,
+        Optional("Runbook"): str,
+        Optional("SummaryAttributes"): [str],
+        Optional("Threshold"): int,
+        Optional("Tags"): [str],
+        Optional("Reports"): {str: list},
+        Optional("DynamicSeverities"): object,
+        Optional("AlertTitle"): str,
+        Optional("AlertContext"): object,
+        Optional("GroupBy"): object,
+        Optional("Tests"): object,
+        Optional("CreateAlert"): bool,
+    },
+    ignore_extra_keys=False,
+)
+
+CORRELATION_RULE_SCHEMA = Schema(
+    {
+        "AnalysisType": "correlation_rule",
+        "RuleID": And(str, NAME_ID_VALIDATION_REGEX),
+        "Enabled": bool,
+        "Detection": object,
+        "Severity": Or("Info", "Low", "Medium", "High", "Critical"),
+        Optional("Description"): str,
+        Optional("DisplayName"): And(str, NAME_ID_VALIDATION_REGEX),
+        Optional("OnlyUseBaseRiskScore"): bool,
+        Optional("OutputIds"): [str],
+        Optional("Reference"): str,
+        Optional("Runbook"): str,
+        Optional("SummaryAttributes"): [str],
+        Optional("Tags"): [str],
+        Optional("Reports"): {str: list},
+        Optional("CreateAlert"): bool,
+    },
+    ignore_extra_keys=False,
+)
 
 SAVED_QUERY_SCHEMA = Schema(
     {

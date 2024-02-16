@@ -37,8 +37,12 @@ from .client import (
     DeleteDetectionsResponse,
     DeleteSavedQueriesParams,
     DeleteSavedQueriesResponse,
+    FeatureFlagsParams,
+    FeatureFlagsResponse,
     GenerateEnrichedEventParams,
     GenerateEnrichedEventResponse,
+    GetRuleBodyParams,
+    GetRuleBodyResponse,
     ListSchemasParams,
     ListSchemasResponse,
     MetricsParams,
@@ -284,6 +288,9 @@ class LambdaClient(Client):
     ) -> BackendResponse[TranspileFiltersResponse]:
         raise BaseException("transpile filters is not supported with lambda client")
 
+    def get_rule_body(self, params: GetRuleBodyParams) -> BackendResponse[GetRuleBodyResponse]:
+        raise BaseException("get rule body is not supported with lambda client")
+
     @staticmethod
     def _serialize_request(data: Dict[str, Any]) -> str:
         logging.debug(">>> %s", data)
@@ -329,3 +336,6 @@ class LambdaClient(Client):
         self, params: GenerateEnrichedEventParams
     ) -> BackendResponse[GenerateEnrichedEventResponse]:
         raise BaseException("enrich-test-data is not supported with lambda client")
+
+    def feature_flags(self, params: FeatureFlagsParams) -> BackendResponse[FeatureFlagsResponse]:
+        raise BaseException("feature-flags is not supported with lambda client")

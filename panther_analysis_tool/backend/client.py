@@ -241,6 +241,7 @@ class BulkUploadResponse:
     data_models: BulkUploadStatistics
     lookup_tables: BulkUploadStatistics
     global_helpers: BulkUploadStatistics
+    correlation_rules: BulkUploadStatistics
 
 
 @dataclass(frozen=True)
@@ -287,6 +288,17 @@ class TranspileToPythonParams:
 @dataclass(frozen=True)
 class TranspileToPythonResponse:
     transpiled_python: List[str]
+
+
+@dataclass(frozen=True)
+class GetRuleBodyParams:
+    id: str  # pylint: disable=invalid-name
+
+
+@dataclass(frozen=True)
+class GetRuleBodyResponse:
+    body: str
+    tests: List[Dict[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -437,6 +449,28 @@ class GenerateEnrichedEventResponse:
     enriched_event: Dict[str, Any]  # json
 
 
+@dataclass(frozen=True)
+class FeatureFlagWithDefault:
+    flag: str
+    default_treatment: Optional[bool] = None
+
+
+@dataclass(frozen=True)
+class FeatureFlagTreatment:
+    flag: str
+    treatment: bool
+
+
+@dataclass(frozen=True)
+class FeatureFlagsParams:
+    flags: List[FeatureFlagWithDefault]
+
+
+@dataclass(frozen=True)
+class FeatureFlagsResponse:
+    flags: List[FeatureFlagTreatment]
+
+
 class Client(ABC):
     @abstractmethod
     def check(self) -> BackendCheckResponse:
@@ -452,6 +486,10 @@ class Client(ABC):
 
     @abstractmethod
     def bulk_validate(self, params: BulkUploadParams) -> BulkUploadValidateStatusResponse:
+        pass
+
+    @abstractmethod
+    def get_rule_body(self, params: GetRuleBodyParams) -> BackendResponse[GetRuleBodyResponse]:
         pass
 
     @abstractmethod
@@ -516,6 +554,10 @@ class Client(ABC):
     ) -> BackendResponse[GenerateEnrichedEventResponse]:
         pass
 
+    @abstractmethod
+    def feature_flags(self, params: FeatureFlagsParams) -> BackendResponse[FeatureFlagsResponse]:
+        pass
+
 
 def backend_response_failed(resp: BackendResponse) -> bool:
     return resp.status_code >= 400 or resp.data.get("statusCode", 0) >= 400
@@ -532,6 +574,7 @@ def to_bulk_upload_response(data: Any) -> BackendResponse[BulkUploadResponse]:
             data_models=BulkUploadStatistics(**data.get("dataModels", default_stats)),
             lookup_tables=BulkUploadStatistics(**data.get("lookupTables", default_stats)),
             global_helpers=BulkUploadStatistics(**data.get("globalHelpers", default_stats)),
+            correlation_rules=BulkUploadStatistics(**data.get("correlationRules", default_stats)),
         ),
     )
 
