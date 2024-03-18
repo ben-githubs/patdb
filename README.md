@@ -206,7 +206,6 @@ return `False`.
 
 ```
 $ panther_analysis_tool test --path tests/fixtures/valid_policies --minimum-tests 2
-$ panther_analysis_tool test --path tests/fixtures/valid_policies --minimum-tests 2
 % panther_analysis_tool test --path okta_rules --minimum-tests 2
 [INFO]: Testing analysis packs in okta_rules
 
@@ -259,15 +258,9 @@ optional arguments:
   --api-token API_TOKEN
                         The Panther API token to use. See: https://docs.panther.com/api-beta (default: None)
   --api-host API_HOST   The Panther API host to use. See: https://docs.panther.com/api-beta (default: None)
-  --no-confirm          Skip manual confirmation of deletion (default: False)
-  --athena-datalake     Instance DataLake is backed by Athena (default: False)
-  --api-token API_TOKEN
-                        The Panther API token to use. See: https://docs.panther.com/api-beta (default: None)
-  --api-host API_HOST   The Panther API host to use. See: https://docs.panther.com/api-beta (default: None)
   --aws-profile AWS_PROFILE
                         The AWS profile to use when updating the AWS Panther deployment. (default: None)
   --analysis-id ANALYSIS_ID [ANALYSIS_ID ...]
-                        Space separated list of Detection IDs (default: [])
                         Space separated list of Detection IDs (default: [])
   --query-id QUERY_ID [QUERY_ID ...]
                         Space separated list of Saved Queries (default: [])
