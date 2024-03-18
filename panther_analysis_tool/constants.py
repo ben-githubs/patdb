@@ -6,7 +6,9 @@ from schema import Schema
 
 from panther_analysis_tool.schemas import (
     CORRELATION_RULE_SCHEMA,
+    CORRELATION_RULE_SCHEMA,
     DATA_MODEL_SCHEMA,
+    DERIVED_SCHEMA,
     DERIVED_SCHEMA,
     GLOBAL_SCHEMA,
     LOOKUP_TABLE_SCHEMA,
@@ -19,7 +21,7 @@ from panther_analysis_tool.schemas import (
 
 PACKAGE_NAME: Final = "panther_analysis_tool"
 
-VERSION_STRING: Final = "0.40.0"
+VERSION_STRING: Final = "0.41.0"
 
 CONFIG_FILE = ".panther_settings.yml"
 DATA_MODEL_LOCATION = "./data_models"
@@ -46,8 +48,10 @@ class AnalysisTypes:
     SCHEDULED_QUERY = "scheduled_query"
     RULE = "rule"
     DERIVED = "derived"
+    DERIVED = "derived"
     SCHEDULED_RULE = "scheduled_rule"
     SIMPLE_DETECTION = "simple_detection"
+    CORRELATION_RULE = "correlation_rule"
     CORRELATION_RULE = "correlation_rule"
 
 
@@ -79,7 +83,9 @@ SCHEMAS: Dict[str, Schema] = {
     AnalysisTypes.SCHEDULED_QUERY: SCHEDULED_QUERY_SCHEMA,
     AnalysisTypes.RULE: RULE_SCHEMA,
     AnalysisTypes.DERIVED: DERIVED_SCHEMA,
+    AnalysisTypes.DERIVED: DERIVED_SCHEMA,
     AnalysisTypes.SCHEDULED_RULE: RULE_SCHEMA,
+    AnalysisTypes.CORRELATION_RULE: CORRELATION_RULE_SCHEMA,
     AnalysisTypes.CORRELATION_RULE: CORRELATION_RULE_SCHEMA,
 }
 
@@ -102,6 +108,9 @@ class ReplayStatus:
     ERROR_COMPUTATION = "ERROR_COMPUTATION"
     EVALUATION_IN_PROGRESS = "EVALUATION_IN_PROGRESS"
     COMPUTATION_IN_PROGRESS = "COMPUTATION_IN_PROGRESS"
+
+
+ENABLE_CORRELATION_RULES_FLAG = "EnableCorrelationRules"
 
 
 ENABLE_CORRELATION_RULES_FLAG = "EnableCorrelationRules"

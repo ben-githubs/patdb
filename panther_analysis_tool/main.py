@@ -85,10 +85,12 @@ from panther_analysis_tool.analysis_utils import (
     ClassifiedAnalysis,
     ClassifiedAnalysisContainer,
     disable_all_base_detections,
+    disable_all_base_detections,
     filter_analysis,
     get_simple_detections_as_python,
     load_analysis_specs,
     load_analysis_specs_ex,
+    lookup_base_detection,
     lookup_base_detection,
     transpile_inline_filters,
 )
@@ -98,6 +100,10 @@ from panther_analysis_tool.backend.client import (
     BulkUploadParams,
 )
 from panther_analysis_tool.backend.client import Client as BackendClient
+from panther_analysis_tool.backend.client import (
+    FeatureFlagsParams,
+    FeatureFlagWithDefault,
+)
 from panther_analysis_tool.backend.client import (
     FeatureFlagsParams,
     FeatureFlagWithDefault,
