@@ -1564,7 +1564,7 @@ def _run_tests(  # pylint: disable=too-many-arguments
         else:
             _print_test_result(detection, test_result, failed_tests)
 
-    if not debug_test_found:
+    if debug_args.get('debug') and not debug_test_found:
         logging.warning(f"No test with name {debug_args['test_name']}.")
     return failed_tests
 
