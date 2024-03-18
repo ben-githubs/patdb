@@ -1569,7 +1569,8 @@ def _run_tests(  # pylint: disable=too-many-arguments
                     output=test_output,
                 )
             )
-        else:
+        elif not debug_args.get("debug"):
+            # Print the test results, if not debug mode.
             _print_test_result(detection, test_result, failed_tests)
 
     if debug_args.get('debug') and not debug_test_found:
