@@ -32,6 +32,7 @@ import shutil
 import subprocess  # nosec
 import sys
 import time
+import traceback # for truncating the tracebacks when testing rules
 import typing  # 'from typing import Optional' conflicts with 'from schema import Optional', below
 import zipfile
 from collections import defaultdict
@@ -823,12 +824,14 @@ def test_analysis(
                         failed_tests=test_result_package.failed_tests,
                     )
                     print("")
-    print_summary(
-        args.path,
-        len(specs.detections + specs.simple_detections),
-        failed_tests,
-        invalid_specs,
-    )
+    
+    if not debug_args.get("debug"):
+        print_summary(
+            args.path,
+            len(specs.detections + specs.simple_detections),
+            failed_tests,
+            invalid_specs,
+        )
 
     #  if the classic format was invalid, just exit
     if invalid_specs:
@@ -1508,6 +1511,13 @@ def _run_tests(  # pylint: disable=too-many-arguments
             test_output = ""
             if not debug_args.get('debug'):
                 test_output = test_output_buf.getvalue()
+            if debug_args.get("debug"):
+                # This is some of the hackiest code I've ever written, but here it is. This code
+                # traceback to print relative to the `rule.py` file in the customer's repo.
+                if result.detection_exception:
+                    err = result.detection_exception
+                    tb = err.__traceback__.tb_next.tb_next.tb_next
+                    traceback.print_tb(tb)
         except (AttributeError, KeyError) as err:
             logging.warning("AttributeError: {%s}", err)
             logging.debug(str(err), exc_info=err)
@@ -1559,7 +1569,8 @@ def _run_tests(  # pylint: disable=too-many-arguments
                     output=test_output,
                 )
             )
-        else:
+        elif not debug_args.get("debug"):
+            # Print the test results, if not debug mode.
             _print_test_result(detection, test_result, failed_tests)
 
     if debug_args.get('debug') and not debug_test_found:
