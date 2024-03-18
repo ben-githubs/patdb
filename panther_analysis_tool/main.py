@@ -85,12 +85,10 @@ from panther_analysis_tool.analysis_utils import (
     ClassifiedAnalysis,
     ClassifiedAnalysisContainer,
     disable_all_base_detections,
-    disable_all_base_detections,
     filter_analysis,
     get_simple_detections_as_python,
     load_analysis_specs,
     load_analysis_specs_ex,
-    lookup_base_detection,
     lookup_base_detection,
     transpile_inline_filters,
 )
@@ -100,10 +98,6 @@ from panther_analysis_tool.backend.client import (
     BulkUploadParams,
 )
 from panther_analysis_tool.backend.client import Client as BackendClient
-from panther_analysis_tool.backend.client import (
-    FeatureFlagsParams,
-    FeatureFlagWithDefault,
-)
 from panther_analysis_tool.backend.client import (
     FeatureFlagsParams,
     FeatureFlagWithDefault,
@@ -728,22 +722,6 @@ def load_analysis(
 
     return specs, invalid_specs
 
-def debug_analysis(
-    args: argparse.Namespace, backend: typing.Optional[BackendClient] = None,
-):
-    debug_args = {
-        'debug': True,
-        'test_name': args.testid
-    }
-    args.filter = {
-        'RuleID': [args.ruleid]
-    }
-    # I don't want these options to appear in the --help command, but they need
-    # default values for seamless integration with test_analysis
-    args.minimum_tests = 0
-    args.sort_test_results = False
-    return test_analysis(args, backend, debug_args=debug_args)
-
 
 # pylint: disable=too-many-locals
 def test_analysis(
@@ -857,6 +835,22 @@ def test_analysis(
         return 1, invalid_specs
 
     return int(bool(failed_tests)), invalid_specs
+
+def debug_analysis(
+    args: argparse.Namespace, backend: typing.Optional[BackendClient] = None,
+):
+    debug_args = {
+        'debug': True,
+        'test_name': args.testid
+    }
+    args.filter = {
+        'RuleID': [args.ruleid]
+    }
+    # I don't want these options to appear in the --help command, but they need
+    # default values for seamless integration with test_analysis
+    args.minimum_tests = 0
+    args.sort_test_results = False
+    return test_analysis(args, backend, debug_args=debug_args)
 
 
 def setup_global_helpers(global_analysis: List[ClassifiedAnalysis]) -> None:
@@ -1337,6 +1331,10 @@ def check_packs(args: argparse.Namespace) -> Tuple[int, str]:
         )
         is_simple_pack = "Simple" in pack.analysis_spec.get("PackID", "").split(".")
         for detection in detections:
+            # if rule is disabled (not Enabled) - no need to include it in the pack
+            if not detection.analysis_spec.get("Enabled", False):
+                continue
+
             is_simple_rule = "Simple" in detection.analysis_spec.get("RuleID", "").split(".")
             if is_simple_pack != is_simple_rule:
                 # simple rules should be in simple packs
