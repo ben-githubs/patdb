@@ -24,10 +24,11 @@ install_requires = [
     "panther-core==0.8.1",
     "typing-extensions",
     "jsonlines",
+    "setuptools"
 ]
 
 setup(
-    name="panther_analysis_tool",
+    name="patdb",
     version=PAT_VERSION,
     packages=find_packages(),
     license="AGPL-3.0",
@@ -35,11 +36,10 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     author="Panther Labs Inc",
-    author_email="pypi@runpanther.io",
-    url="https://github.com/panther-labs/panther_analysis_tool",
+    author_email="ben.airey@panther.com",
+    url="https://github.com/ben-githubs/patdb",
     download_url=f"https://github.com/panther-labs/panther_analysis_tool/archive/v{PAT_VERSION}.tar.gz",
     keywords=["Security", "CLI"],
-    scripts=["bin/panther_analysis_tool", "bin/pat"],
     install_requires=install_requires,
     classifiers=[
         "Development Status :: 4 - Beta",
@@ -49,4 +49,9 @@ setup(
         "Programming Language :: Python :: 3.9",
     ],
     include_package_data=True,
+    entry_points={
+        'console_scripts': [
+            'patdb = panther_analysis_tool.main:run'
+        ]
+    }
 )
