@@ -27,6 +27,10 @@ deps-update: ## Update dependencies using pipenv
 reqs:
 	pipenv requirements > requirements.txt
 
+.PHONY: reqs
+reqs:
+	pipenv requirements > requirements.txt
+
 .PHONY: lint
 lint: ## Lint panther_analysis_tool (mypy, bandit, pylint)
 	pipenv run mypy $(packages) --disallow-untyped-defs --ignore-missing-imports --warn-unused-ignores
@@ -68,6 +72,7 @@ integration: ## Run panther_analysis_tool integration tests (from included fixtu
 		pipenv requirements | grep -v 'panther-analysis-tool==' > requirements.ci.txt; \
 		pipenv install -r requirements.ci.txt; \
 		pipenv install -e ..; \
+		pip install schema==0.7.5; \
 		pipenv run panther_analysis_tool --version; \
 		pipenv run panther_analysis_tool test --path .
 	rm -rf panther-analysis

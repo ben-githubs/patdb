@@ -54,6 +54,7 @@ import dateutil.parser
 import jsonschema
 import requests
 import schema
+from colorama import Fore, Style
 from dynaconf import Dynaconf, Validator
 from gql.transport.aiohttp import log as aiohttp_logger
 from jsonschema.validators import Draft202012Validator
@@ -86,10 +87,12 @@ from panther_analysis_tool.analysis_utils import (
     ClassifiedAnalysis,
     ClassifiedAnalysisContainer,
     disable_all_base_detections,
+    disable_all_base_detections,
     filter_analysis,
     get_simple_detections_as_python,
     load_analysis_specs,
     load_analysis_specs_ex,
+    lookup_base_detection,
     lookup_base_detection,
     transpile_inline_filters,
 )
@@ -686,7 +689,10 @@ def upload_assets_github(upload_url: str, headers: dict, release_dir: str) -> in
 
 
 def load_analysis(
-    path: str, ignore_table_names: bool, valid_table_names: List[str], ignore_files: List[str]
+    path: str,
+    ignore_table_names: bool,
+    valid_table_names: List[str],
+    ignore_files: List[str],
 ) -> Tuple[Any, List[Any]]:
     """Loads each policy or rule into memory.
 
@@ -977,7 +983,8 @@ def setup_run_tests(  # pylint: disable=too-many-locals,too-many-arguments,too-m
 
         if is_correlation_rule(analysis_spec):
             logging.warning(
-                "Skipping Correlation Rule '%s', testing not supported", analysis_spec.get("RuleID")
+                "Skipping Correlation Rule '%s', testing not supported",
+                analysis_spec.get("RuleID"),
             )
             continue
 
@@ -1581,8 +1588,9 @@ def _run_tests(  # pylint: disable=too-many-arguments
 def _print_test_result(
     detection: Detection, test_result: TestResult, failed_tests: DefaultDict[str, list]
 ) -> None:
-    status_pass = "PASS"  # nosec
-    status_fail = "FAIL"
+    status_pass = Fore.GREEN + "PASS" + Style.RESET_ALL
+    status_fail = Fore.RED + "FAIL" + Style.RESET_ALL
+
     if test_result.passed:
         outcome = status_pass
     else:
